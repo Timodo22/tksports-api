@@ -10,5 +10,4 @@ COPY . .
 
 EXPOSE 3000
 
-CMD ["python", "api.py"]
-
+CMD ["python", "app.py"]
