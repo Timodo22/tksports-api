@@ -26,26 +26,46 @@ MJ_APIKEY_PUBLIC = os.getenv("MJ_APIKEY_PUBLIC")
 MJ_APIKEY_PRIVATE = os.getenv("MJ_APIKEY_PRIVATE")
 
 if not MJ_APIKEY_PUBLIC or not MJ_APIKEY_PRIVATE:
-    logging.warning("⚠️ Mailjet API keys are not set in environment variables.")
+    logging.warning("⚠️ Mailjet API keys are NOT set!")
 
 
 # ───────────────────────────────────────────────
-# Google Sheets — opslaan van registraties
+# Google Sheets settings
 # ───────────────────────────────────────────────
-SPREADSHEET_ID = "1owN41X9KcQL_Ipl6wxzFe-M6Xsbe5Y3glfoUrZN6YPY"   # <<<< vul deze in
+SPREADSHEET_ID = "1owN41X9KcQL_Ipl6wxzFe-M6Xsbe5Y3glfoUrZN6YPY"
+SECRET_PATH = "/etc/secrets/google-credentials.json"   # Secret File in Render
+
 
 def append_to_google_sheet(parent_info, participants):
-    try:
-        key_data = json.loads(os.getenv("GOOGLE_SHEETS_KEY"))
+    logging.info("🟧 append_to_google_sheet() aangeroepen")
 
+    try:
+        # Check if secret exists
+        if not os.path.exists(SECRET_PATH):
+            logging.error("❌ Secret file NIET gevonden op: " + SECRET_PATH)
+            return
+
+        logging.info("🔐 Secret file gevonden!")
+
+        # Load JSON key
+        with open(SECRET_PATH, "r") as f:
+            key_data = json.load(f)
+
+        logging.info(f"🔑 Service account e-mail: {key_data.get('client_email')}")
+
+        # Credentials
         credentials = service_account.Credentials.from_service_account_info(
             key_data,
             scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
+        logging.info("✅ Google credentials geladen")
 
+        # Sheets API client
         service = build("sheets", "v4", credentials=credentials)
+        logging.info("📄 Sheets service aangemaakt")
 
-        values = [[
+        # Prepare row
+        row = [
             datetime.datetime.utcnow().isoformat(),
 
             parent_info.get("email", ""),
@@ -59,25 +79,29 @@ def append_to_google_sheet(parent_info, participants):
             parent_info.get("phone", ""),
 
             json.dumps(participants)
-        ]]
+        ]
 
+        logging.info(f"🟩 Data naar Google Sheets: {row}")
+
+        # Append to sheet
         service.spreadsheets().values().append(
             spreadsheetId=SPREADSHEET_ID,
             range="Clients!A:Z",
             valueInputOption="RAW",
-            body={"values": values}
+            body={"values": [row]}
         ).execute()
 
-        print("✅ Row appended to Google Sheets")
+        logging.info("🎉 SUCCESS: Row toegevoegd aan Google Sheets!")
 
     except Exception as e:
-        print("❌ Google Sheets append error:", e)
-        traceback.print_exc()
+        logging.error("❌ Google Sheets append ERROR:")
+        logging.error(e)
+        logging.error(traceback.format_exc())
 
 
 
 # ───────────────────────────────────────────────
-# Email template
+# HTML Email template
 # ───────────────────────────────────────────────
 def build_html_email(name: str, parent_info: dict, participants: list):
     participant_summary = ""
@@ -90,37 +114,25 @@ def build_html_email(name: str, parent_info: dict, participants: list):
         """
 
     html = f"""
-    <div style="font-family: 'Segoe UI', Helvetica, Arial, sans-serif; background:#ffffff; color:#333; padding:30px; max-width:700px; margin:auto; border-radius:10px; border:1px solid #eee;">
-        <div style="text-align:center; margin-bottom:25px;">
-            <img src="https://tksportsacademy.nl/assets/imgs/logo-blac.png" alt="TK Sports Academy" style="width:120px; margin-bottom:10px;">
-        </div>
+    <div style="font-family: 'Segoe UI'; background:#ffffff; padding:30px; max-width:700px; margin:auto;">
         <h2 style="color:#ff6b00;">Hi {name.split()[0]},</h2>
-        <p style="font-size:1.05rem; line-height:1.6;">
-            Thank you for signing up for <b>TK Sports Academy</b>!
-        </p>
-        <hr style="margin:30px 0; border:none; border-top:1px solid #eee;">
-        <h3 style="color:#ff6b00;">Registration Summary</h3>
-        <div style="margin-top:10px; font-size:0.95rem;">
-            <p><b>Parent/Guardian:</b> {parent_info.get('firstname','')} {parent_info.get('lastname','')}</p>
-            <p><b>Email:</b> {parent_info.get('email','')}</p>
-            <p><b>Phone:</b> {parent_info.get('phone','')}</p>
-            <p><b>Address:</b> {parent_info.get('address','')}, {parent_info.get('postcode','')} {parent_info.get('city','')}, {parent_info.get('country','')}</p>
-        </div>
-        <div style="margin-top:15px;">{participant_summary}</div>
-        <hr style="margin:30px 0; border:none; border-top:1px solid #eee;">
-        <p style="font-size:1.05rem; line-height:1.6;">
-            We’re looking forward to seeing you soon!
-        </p>
-        <p style="margin-top:25px; font-style:italic; color:#777;">Kind regards,<br><b>The TK Sports Academy Team</b></p>
+        <p>Thank you for registering!</p>
+        <hr>
+        {participant_summary}
+        <hr>
+        <p>Kind regards,<br><b>TK Sports Academy</b></p>
     </div>
     """
     return html
 
 
+
 # ───────────────────────────────────────────────
-# Mail versturen
+# Send Mailjet email
 # ───────────────────────────────────────────────
-def send_mailjet_confirmation(email: str, name: str, parent_info: dict, participants: list):
+def send_mailjet_confirmation(email, name, parent_info, participants):
+    logging.info("📧 Sending confirmation email...")
+
     html = build_html_email(name, parent_info, participants)
     url = "https://api.mailjet.com/v3.1/send"
 
@@ -129,13 +141,13 @@ def send_mailjet_confirmation(email: str, name: str, parent_info: dict, particip
             {
                 "From": {"Email": "info@tksportsacademy.nl", "Name": "TK Sports Academy"},
                 "To": [{"Email": email, "Name": name}],
-                "Subject": f"Registration Confirmation - TK Sports Academy",
+                "Subject": "Registration Confirmation - TK Sports Academy",
                 "HTMLPart": html
             }
         ]
     }
 
-    r = requests.post(
+    response = requests.post(
         url,
         auth=(MJ_APIKEY_PUBLIC, MJ_APIKEY_PRIVATE),
         headers={"Content-Type": "application/json"},
@@ -143,48 +155,59 @@ def send_mailjet_confirmation(email: str, name: str, parent_info: dict, particip
         timeout=15
     )
 
-    if r.status_code != 200:
-        raise Exception(f"Mailjet error {r.status_code}: {r.text}")
+    logging.info(f"📨 Mailjet status: {response.status_code}")
 
-    result = r.json()
-    if result.get("Messages", [{}])[0].get("Status") != "success":
-        raise Exception(f"Mailjet response error: {result}")
+    if response.status_code != 200:
+        logging.error("❌ Mailjet ERROR:")
+        logging.error(response.text)
+        raise Exception("Mailjet failed: " + response.text)
 
-    return result
+    return response.json()
+
 
 
 # ───────────────────────────────────────────────
-# Route: Send Confirmation + Save to Sheets
+# Route: send email + save to sheet
 # ───────────────────────────────────────────────
 @app.route("/send-confirmation", methods=["POST"])
 def send_confirmation():
+    logging.info("🚀 /send-confirmation HIT!")
+
     try:
         data = request.get_json() or {}
-        email = data.get("email")
-        name = data.get("name", "Athlete")
+        logging.info(f"📦 Ontvangen JSON: {data}")
 
+        email = data.get("email")
         if not email:
             return jsonify({"success": False, "error": "Email missing"}), 400
 
+        name = data.get("name", "Athlete")
         parent_info = data.get("parent_info", {})
         participants = data.get("participants", [])
 
-        # 1. Verstuur email
+        logging.info("📧 Sending Mailjet email...")
         result = send_mailjet_confirmation(email, name, parent_info, participants)
 
-        # 2. Opslaan in Google Sheets
+        logging.info("📊 Saving to Google Sheets...")
         append_to_google_sheet(parent_info, participants)
 
-        return jsonify({"success": True, "result": result}), 200
+        logging.info("🎉 DONE: email + sheet saved")
+
+        return jsonify({"success": True}), 200
 
     except Exception as e:
+        logging.error("🔥 ERROR in /send-confirmation")
+        logging.error(e)
         logging.error(traceback.format_exc())
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+
+# ───────────────────────────────────────────────
 @app.route("/ping")
 def ping():
     return jsonify({"status": "ok"}), 200
+
 
 
 if __name__ == "__main__":
