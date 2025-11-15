@@ -5,6 +5,11 @@ import os
 import json
 import logging
 import traceback
+import datetime
+
+# Google Sheets API
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -15,7 +20,7 @@ logging.basicConfig(
 )
 
 # ───────────────────────────────────────────────
-# API Keys via environment variables
+# Mailjet keys
 # ───────────────────────────────────────────────
 MJ_APIKEY_PUBLIC = os.getenv("MJ_APIKEY_PUBLIC")
 MJ_APIKEY_PRIVATE = os.getenv("MJ_APIKEY_PRIVATE")
@@ -23,15 +28,63 @@ MJ_APIKEY_PRIVATE = os.getenv("MJ_APIKEY_PRIVATE")
 if not MJ_APIKEY_PUBLIC or not MJ_APIKEY_PRIVATE:
     logging.warning("⚠️ Mailjet API keys are not set in environment variables.")
 
+
 # ───────────────────────────────────────────────
-# Helper: HTML e-mailtemplate
+# Google Sheets — opslaan van registraties
+# ───────────────────────────────────────────────
+SPREADSHEET_ID = "1owN41X9KcQL_Ipl6wxzFe-M6Xsbe5Y3glfoUrZN6YPY"   # <<<< vul deze in
+
+def append_to_google_sheet(parent_info, participants):
+    try:
+        key_data = json.loads(os.getenv("GOOGLE_SHEETS_KEY"))
+
+        credentials = service_account.Credentials.from_service_account_info(
+            key_data,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+
+        service = build("sheets", "v4", credentials=credentials)
+
+        values = [[
+            datetime.datetime.utcnow().isoformat(),
+
+            parent_info.get("email", ""),
+            parent_info.get("firstname", ""),
+            parent_info.get("lastname", ""),
+            parent_info.get("dob", ""),
+            parent_info.get("address", ""),
+            parent_info.get("postcode", ""),
+            parent_info.get("city", ""),
+            parent_info.get("country", ""),
+            parent_info.get("phone", ""),
+
+            json.dumps(participants)
+        ]]
+
+        service.spreadsheets().values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range="Clients!A:Z",
+            valueInputOption="RAW",
+            body={"values": values}
+        ).execute()
+
+        print("✅ Row appended to Google Sheets")
+
+    except Exception as e:
+        print("❌ Google Sheets append error:", e)
+        traceback.print_exc()
+
+
+
+# ───────────────────────────────────────────────
+# Email template
 # ───────────────────────────────────────────────
 def build_html_email(name: str, parent_info: dict, participants: list):
     participant_summary = ""
     for i, p in enumerate(participants, 1):
         participant_summary += f"""
         <p style="margin:6px 0;">
-            <b>Participant {i}:</b> {p.get('firstname','')} {p.get('lastname','')}  
+            <b>Participant {i}:</b> {p.get('firstname','')} {p.get('lastname','')}
             ({p.get('position','')} – {p.get('club','')}, Shirt: {p.get('tshirt','')})
         </p>
         """
@@ -43,17 +96,7 @@ def build_html_email(name: str, parent_info: dict, participants: list):
         </div>
         <h2 style="color:#ff6b00;">Hi {name.split()[0]},</h2>
         <p style="font-size:1.05rem; line-height:1.6;">
-            Thank you for signing up for <b>TK Sports Academy</b>! We're thrilled to have you join us.  
-            Your registration has been received successfully.
-        </p>
-        <p style="font-size:1.05rem; line-height:1.6;">
-            To secure your place in the camp, we kindly ask that you complete your <b>deposit payment</b> as soon as possible.
-            Your spot will only be <b>guaranteed after the deposit has been received</b>.  
-            We will send you a separate email shortly with the payment details.
-        </p>
-        <p style="font-size:1.05rem; line-height:1.6;">
-            Meanwhile, please review your registration details below.  
-            If you notice any incorrect information, just reply to this email and let us know.
+            Thank you for signing up for <b>TK Sports Academy</b>!
         </p>
         <hr style="margin:30px 0; border:none; border-top:1px solid #eee;">
         <h3 style="color:#ff6b00;">Registration Summary</h3>
@@ -66,23 +109,16 @@ def build_html_email(name: str, parent_info: dict, participants: list):
         <div style="margin-top:15px;">{participant_summary}</div>
         <hr style="margin:30px 0; border:none; border-top:1px solid #eee;">
         <p style="font-size:1.05rem; line-height:1.6;">
-            We’re looking forward to seeing you on the ice soon!  
-            If you have any questions, don’t hesitate to reach out to us at 
-            <a href="mailto:info@tksportsacademy.nl" style="color:#ff6b00; text-decoration:none;">info@tksportsacademy.nl</a>.
+            We’re looking forward to seeing you soon!
         </p>
         <p style="margin-top:25px; font-style:italic; color:#777;">Kind regards,<br><b>The TK Sports Academy Team</b></p>
-        <hr style="margin:30px 0; border:none; border-top:1px solid #eee;">
-        <div style="text-align:center; font-size:0.85rem; color:#aaa;">
-            <p>© 2025 TK Sports Academy — Eindhoven, The Netherlands</p>
-            <p>Powered by <a href="https://spectux.com" style="color:#ff6b00; text-decoration:none; font-weight:bold;">Spectux.com</a></p>
-        </div>
     </div>
     """
     return html
 
 
 # ───────────────────────────────────────────────
-# Helper: Mail versturen via Mailjet
+# Mail versturen
 # ───────────────────────────────────────────────
 def send_mailjet_confirmation(email: str, name: str, parent_info: dict, participants: list):
     html = build_html_email(name, parent_info, participants)
@@ -118,7 +154,7 @@ def send_mailjet_confirmation(email: str, name: str, parent_info: dict, particip
 
 
 # ───────────────────────────────────────────────
-# ROUTE
+# Route: Send Confirmation + Save to Sheets
 # ───────────────────────────────────────────────
 @app.route("/send-confirmation", methods=["POST"])
 def send_confirmation():
@@ -133,7 +169,12 @@ def send_confirmation():
         parent_info = data.get("parent_info", {})
         participants = data.get("participants", [])
 
+        # 1. Verstuur email
         result = send_mailjet_confirmation(email, name, parent_info, participants)
+
+        # 2. Opslaan in Google Sheets
+        append_to_google_sheet(parent_info, participants)
+
         return jsonify({"success": True, "result": result}), 200
 
     except Exception as e:
