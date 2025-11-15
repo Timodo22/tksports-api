@@ -2,5 +2,7 @@ Flask==3.0.2
 Flask-Cors==4.0.0
 python-dotenv==1.0.1
 yagmail==0.15.293
-google-api-python-client
-google-auth
+google-api-python-client==2.149.0
+google-auth==2.37.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
