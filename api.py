@@ -96,25 +96,84 @@ def append_to_google_sheet(parent_info, participants):
 # EMAIL TEMPLATE
 # ───────────────────────────────────────────────
 def build_html_email(name, parent_info, participants):
-    participant_summary = ""
+    participant_html = ""
     for i, p in enumerate(participants, 1):
-        participant_summary += f"""
-        <p>
-            <b>Participant {i}:</b> {p.get('firstname')} {p.get('lastname')}
-            ({p.get('position')} – {p.get('club')})
-        </p>
+        participant_html += f"""
+            <tr>
+                <td style="padding:10px 0; font-size:16px; color:#333;">
+                    <b>Participant {i}:</b> {p.get("firstname")} {p.get("lastname")} <br>
+                    <span style="color:#555;">
+                        Position: {p.get("position")} <br>
+                        Club: {p.get("club")} <br>
+                        T-shirt size: {p.get("tshirt")}
+                    </span>
+                </td>
+            </tr>
+            <tr><td style="border-bottom:1px solid #eee; padding-bottom:10px;"></td></tr>
         """
 
     return f"""
-    <div style="font-family:Segoe UI; padding:20px">
-        <h2>Hi {name.split()[0]},</h2>
-        <p>Thank you for registering.</p>
-        <h3>Participants:</h3>
-        {participant_summary}
-        <br>
-        <p>See you soon!<br><b>TK Sports Academy</b></p>
-    </div>
+    <html>
+    <body style="font-family:Segoe UI, sans-serif; background:#f7f7f7; padding:30px;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:auto; background:#fff; border-radius:10px; padding:20px;">
+            
+            <!-- LOGO -->
+            <tr>
+                <td style="text-align:center; padding-bottom:20px;">
+                    <img src="https://tksportsacademy.nl/assets/imgs/logo-blac.png" width="120" alt="TK Sports Academy">
+                </td>
+            </tr>
+
+            <!-- HEADER -->
+            <tr>
+                <td style="font-size:24px; font-weight:bold; color:#ff6b00; padding-bottom:10px;">
+                    Hi {name.split()[0]},
+                </td>
+            </tr>
+
+            <tr>
+                <td style="font-size:16px; color:#333; padding-bottom:20px;">
+                    Thank you for signing up for <b>TK Sports Academy</b>!
+                </td>
+            </tr>
+
+            <!-- PARENT INFO -->
+            <tr>
+                <td style="background:#fff4ec; padding:15px; border-radius:6px; color:#333;">
+                    <h3 style="margin:0; margin-bottom:10px; color:#ff6b00;">Registration Summary</h3>
+
+                    <b>Parent/Guardian:</b> {parent_info.get("firstname")} {parent_info.get("lastname")} <br>
+                    <b>Email:</b> {parent_info.get("email")} <br>
+                    <b>Phone:</b> {parent_info.get("phone")} <br>
+                    <b>Address:</b> {parent_info.get("address")}, {parent_info.get("postcode")} {parent_info.get("city")}, {parent_info.get("country")}
+                </td>
+            </tr>
+
+            <tr><td style="height:20px;"></td></tr>
+
+            <!-- PARTICIPANTS -->
+            <tr>
+                <td>
+                    <h3 style="color:#ff6b00; margin-bottom:10px;">Participants</h3>
+                </td>
+            </tr>
+
+            {participant_html}
+
+            <tr><td style="height:20px;"></td></tr>
+
+            <tr>
+                <td style="text-align:center; font-size:16px; padding-top:10px;">
+                    We're looking forward to seeing you soon! <br><br>
+                    <b>TK Sports Academy Team</b>
+                </td>
+            </tr>
+
+        </table>
+    </body>
+    </html>
     """
+
 
 
 # ───────────────────────────────────────────────
@@ -184,3 +243,4 @@ def ping():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 3000))
     app.run(host="0.0.0.0", port=port)
+
