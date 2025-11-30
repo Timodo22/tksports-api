@@ -2,53 +2,33 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // ---- CORS ----
+    // ===== CORS =====
     if (request.method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders()
-      });
+      return new Response(null, { status: 204, headers: corsHeaders() });
     }
 
-    console.log(`🌐 Incoming request: ${request.method} ${url.pathname}`);
-
-    // ---- ROUTES ----
     if (url.pathname === "/ping") {
-      console.log("🏓 Ping request OK");
       return json({ status: "ok" });
     }
 
-    // ------------------------------
-    // SEND CONFIRMATION EMAIL
-    // ------------------------------
+    // ==========================================
+    // HANDLE REGISTRATION
+    // ==========================================
     if (url.pathname === "/send-confirmation" && request.method === "POST") {
-      console.log("📩 Route hit: /send-confirmation");
-
       try {
         const body = await request.json();
-        console.log("📨 Received body:", body);
 
         const email = body.email;
-        const name = body.name || "Athlete";
+        const name = body.name || "";
         const parent_info = body.parent_info || {};
         const participants = body.participants || [];
 
-        // Validate
-        if (!email) {
-          console.log("❌ Validation failed: missing email");
-          return json({ success: false, error: "Email missing" }, 400);
-        }
+        if (!email) return json({ success: false, error: "Email missing" }, 400);
 
-        console.log("👤 Email:", email);
-        console.log("👪 Parent info:", parent_info);
-        console.log("👥 Participants:", participants);
-
-        // Build email HTML content
+        // Build confirmation email
         const html = buildHtmlEmail(name, parent_info, participants);
 
-        // Send email through Mailjet
-        console.log("🚀 Attempting Mailjet send...");
-
+        // Send email via Mailjet
         const result = await sendMailjet(
           email,
           name,
@@ -57,27 +37,49 @@ export default {
           env.MJ_APIKEY_PRIVATE
         );
 
-        console.log("📬 Mailjet result:", result);
-
-        // Check Mailjet response for success
         const success = result.Messages && result.Messages[0]?.Status === "success";
 
+        // Always push to Google Sheet
+        for (const p of participants) {
+          await appendToSheet(env, [
+            new Date().toISOString(),            // Date
+            parent_info.email || "",
+            parent_info.firstname || "",
+            parent_info.lastname || "",
+            parent_info.dob || "",
+            parent_info.address || "",
+            parent_info.postcode || "",
+            parent_info.city || "",
+            parent_info.country || "",
+            parent_info.phone || "",
+
+            p.firstname || "",
+            p.lastname || "",
+            p.dob || "",
+            p.club || "",
+            p.position || "",
+            p.tshirt || "",
+            p.allergy || "",
+            p.other || ""
+          ]);
+        }
+
         return json({ success, result });
+
       } catch (e) {
-        console.error("❌ ERROR in /send-confirmation:", e);
         return json({ success: false, error: e.toString() }, 500);
       }
     }
 
-    // Default 404
-    console.warn("⚠️ Route not found:", url.pathname);
     return json({ error: "Not found" }, 404);
   }
 };
 
-// -----------------------------
-// Helpers
-// -----------------------------
+
+
+// =========================================
+// HELPERS
+// =========================================
 
 function corsHeaders() {
   return {
@@ -97,33 +99,23 @@ function json(obj, status = 200) {
   });
 }
 
-// -----------------------------
-// Mailjet sending function (with logging)
-// -----------------------------
+
+
+// =========================================
+// MAILJET
+// =========================================
+
 async function sendMailjet(email, name, html, publicKey, privateKey) {
-  console.log("📧 Preparing Mailjet payload...");
-
-  if (!publicKey || !privateKey) {
-    console.error("❌ Mailjet API keys missing!");
-  }
-
   const payload = {
     Messages: [
       {
-        From: {
-          Email: "info@tksportsacademy.nl",
-          Name: "TK Sports Academy"
-        },
-        To: [
-          { Email: email, Name: name }
-        ],
+        From: { Email: "info@tksportsacademy.nl", Name: "TK Sports Academy" },
+        To: [{ Email: email, Name: name }],
         Subject: `Registration Confirmation - TK Sports Academy`,
         HTMLPart: html
       }
     ]
   };
-
-  console.log("📦 Full Mailjet payload:", payload);
 
   const response = await fetch("https://api.mailjet.com/v3.1/send", {
     method: "POST",
@@ -134,25 +126,107 @@ async function sendMailjet(email, name, html, publicKey, privateKey) {
     body: JSON.stringify(payload)
   });
 
-  const jsonRes = await response.json();
-
-  console.log("📬 Mailjet HTTP status:", response.status);
-  console.log("📬 Mailjet JSON response:", jsonRes);
-
-  return jsonRes;
+  return await response.json();
 }
 
-// -----------------------------
-// HTML template
-// -----------------------------
-function buildHtmlEmail(name, parent_info, participants) {
-  console.log("📝 Building HTML email...");
 
+
+// =========================================
+// GOOGLE SHEETS - JWT AUTH
+// =========================================
+
+// Convert private key to ArrayBuffer
+function str2ab(str) {
+  const cleaned = str
+    .replace("-----BEGIN PRIVATE KEY-----", "")
+    .replace("-----END PRIVATE KEY-----", "")
+    .replace(/\n/g, "")
+    .trim();
+
+  const binary = atob(cleaned);
+  const buffer = new ArrayBuffer(binary.length);
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return buffer;
+}
+
+async function getGoogleAccessToken(env) {
+  const header = { alg: "RS256", typ: "JWT" };
+  const now = Math.floor(Date.now() / 1000);
+
+  const claim = {
+    iss: env.GOOGLE_SERVICE_EMAIL,
+    scope: "https://www.googleapis.com/auth/spreadsheets",
+    aud: "https://oauth2.googleapis.com/token",
+    exp: now + 3600,
+    iat: now
+  };
+
+  const privateKey = await crypto.subtle.importKey(
+    "pkcs8",
+    str2ab(env.GOOGLE_PRIVATE_KEY),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  const encoder = new TextEncoder();
+  const unsigned = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(claim))}`;
+
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    privateKey,
+    encoder.encode(unsigned)
+  );
+
+  const jwt = `${unsigned}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`;
+
+  // Exchange JWT → Access Token
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
+  });
+
+  return (await tokenRes.json()).access_token;
+}
+
+
+
+// =========================================
+// ADD ROW TO GOOGLE SHEET
+// =========================================
+
+async function appendToSheet(env, rowData) {
+  const token = await getGoogleAccessToken(env);
+  const spreadsheetId = env.GOOGLE_SHEET_ID;
+  const range = "Sheet1!A:Z";
+
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=RAW`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ values: [rowData] })
+    }
+  );
+}
+
+
+
+// =========================================
+// EMAIL HTML
+// =========================================
+
+function buildHtmlEmail(name, parent_info, participants) {
   let participant_summary = "";
 
   participants.forEach((p, i) => {
     participant_summary += `
-      <p style="margin:6px 0;">
+      <p>
         <b>Participant ${i + 1}:</b> ${p.firstname || ""} ${p.lastname || ""}
         (${p.position || ""} – ${p.club || ""}, Shirt: ${p.tshirt || ""})
         Allergy: ${p.allergy || "None"}
@@ -161,36 +235,19 @@ function buildHtmlEmail(name, parent_info, participants) {
   });
 
   return `
-  <div style="font-family: 'Segoe UI', Helvetica, Arial, sans-serif; background:#ffffff; color:#333; padding:30px; max-width:700px; margin:auto; border-radius:10px; border:1px solid #eee;">
-      <div style="text-align:center; margin-bottom:25px;">
-          <img src="https://tksportsacademy.nl/assets/imgs/logo-blac.png" alt="TK Sports Academy" style="width:120px; margin-bottom:10px;">
-      </div>
-      <h2 style="color:#ff6b00;">Hi ${name.split(" ")[0]},</h2>
-      <p style="font-size:1.05rem; line-height:1.6;">
-          Thank you for signing up for <b>TK Sports Academy</b>!
-      </p>
-      <p style="font-size:1.05rem; line-height:1.6;">
-          To secure your place, please complete your <b>deposit payment</b>.
-      </p>
+    <div style="font-family:Arial;padding:20px;">
+      <h2>Hi ${name.split(" ")[0]},</h2>
+      <p>Thank you for signing up!</p>
 
-      <hr style="margin:30px 0; border:none; border-top:1px solid #eee;">
-      <h3 style="color:#ff6b00;">Registration Summary</h3>
+      <h3>Parent Information</h3>
+      <p>${parent_info.firstname} ${parent_info.lastname}</p>
+      <p>${parent_info.email}</p>
+      <p>${parent_info.phone}</p>
 
-      <div style="margin-top:10px; font-size:0.95rem;">
-          <p><b>Parent/Guardian:</b> ${parent_info.firstname || ""} ${parent_info.lastname || ""}</p>
-          <p><b>Email:</b> ${parent_info.email || ""}</p>
-          <p><b>Phone:</b> ${parent_info.phone || ""}</p>
-          <p><b>Address:</b> ${parent_info.address || ""}, ${parent_info.postcode || ""} ${parent_info.city || ""}, ${parent_info.country || ""}</p>
-      </div>
+      <h3>Participants</h3>
+      ${participant_summary}
 
-      <div style="margin-top:15px;">${participant_summary}</div>
-
-      <hr style="margin:30px 0; border:none; border-top:1px solid #eee;">
-      <p style="font-size:1.05rem; line-height:1.6;">
-          If you have questions, contact us at
-          <a href="mailto:info@tksportsacademy.nl" style="color:#ff6b00;">info@tksportsacademy.nl</a>.
-      </p>
-
-      <p style="margin-top:25px; font-style:italic; color:#777;">Kind regards,<br><b>The TK Sports Academy Team</b></p>
-  </div>`;
+      <p>Kind regards,<br>TK Sports Academy</p>
+    </div>
+  `;
 }
