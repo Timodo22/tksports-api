@@ -5,6 +5,17 @@ compatibility_date = "2024-12-01"
 # Dit heb je nodig voor fetch(), btoa(), etc.
 compatibility_flags = ["nodejs_compat"]
 
+{
+  "observability": {
+    "logs": {
+      "enabled": false,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    }
+  }
+}
+
 [vars]
 # Vul deze NIET in hier.
 # Je zet ze in Cloudflare Dashboard → Workers → Settings → Variables
