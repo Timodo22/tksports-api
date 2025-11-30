@@ -10,28 +10,45 @@ export default {
       });
     }
 
+    console.log(`🌐 Incoming request: ${request.method} ${url.pathname}`);
+
     // ---- ROUTES ----
     if (url.pathname === "/ping") {
+      console.log("🏓 Ping request OK");
       return json({ status: "ok" });
     }
 
+    // ------------------------------
+    // SEND CONFIRMATION EMAIL
+    // ------------------------------
     if (url.pathname === "/send-confirmation" && request.method === "POST") {
+      console.log("📩 Route hit: /send-confirmation");
+
       try {
         const body = await request.json();
+        console.log("📨 Received body:", body);
 
         const email = body.email;
         const name = body.name || "Athlete";
         const parent_info = body.parent_info || {};
         const participants = body.participants || [];
 
+        // Validate
         if (!email) {
+          console.log("❌ Validation failed: missing email");
           return json({ success: false, error: "Email missing" }, 400);
         }
 
-        // Build HTML
+        console.log("👤 Email:", email);
+        console.log("👪 Parent info:", parent_info);
+        console.log("👥 Participants:", participants);
+
+        // Build email HTML content
         const html = buildHtmlEmail(name, parent_info, participants);
 
-        // Send Mailjet request
+        // Send email through Mailjet
+        console.log("🚀 Attempting Mailjet send...");
+
         const result = await sendMailjet(
           email,
           name,
@@ -40,12 +57,20 @@ export default {
           env.MJ_APIKEY_PRIVATE
         );
 
-        return json({ success: true, result });
+        console.log("📬 Mailjet result:", result);
+
+        // Check Mailjet response for success
+        const success = result.Messages && result.Messages[0]?.Status === "success";
+
+        return json({ success, result });
       } catch (e) {
+        console.error("❌ ERROR in /send-confirmation:", e);
         return json({ success: false, error: e.toString() }, 500);
       }
     }
 
+    // Default 404
+    console.warn("⚠️ Route not found:", url.pathname);
     return json({ error: "Not found" }, 404);
   }
 };
@@ -73,28 +98,47 @@ function json(obj, status = 200) {
 }
 
 // -----------------------------
-// Mailjet sending function
+// Mailjet sending function (with logging)
 // -----------------------------
 async function sendMailjet(email, name, html, publicKey, privateKey) {
+  console.log("📧 Preparing Mailjet payload...");
+
+  if (!publicKey || !privateKey) {
+    console.error("❌ Mailjet API keys missing!");
+  }
+
+  const payload = {
+    Messages: [
+      {
+        From: {
+          Email: "info@tksportsacademy.nl",
+          Name: "TK Sports Academy"
+        },
+        To: [
+          { Email: email, Name: name }
+        ],
+        Subject: `Registration Confirmation - TK Sports Academy`,
+        HTMLPart: html
+      }
+    ]
+  };
+
+  console.log("📦 Full Mailjet payload:", payload);
+
   const response = await fetch("https://api.mailjet.com/v3.1/send", {
     method: "POST",
     headers: {
       "Authorization": "Basic " + btoa(`${publicKey}:${privateKey}`),
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      Messages: [
-        {
-          From: { "Email": "info@tksportsacademy.nl", "Name": "TK Sports Academy" },
-          To: [{ "Email": email, "Name": name }],
-          Subject: `Registration Confirmation - TK Sports Academy`,
-          HTMLPart: html
-        }
-      ]
-    })
+    body: JSON.stringify(payload)
   });
 
   const jsonRes = await response.json();
+
+  console.log("📬 Mailjet HTTP status:", response.status);
+  console.log("📬 Mailjet JSON response:", jsonRes);
+
   return jsonRes;
 }
 
@@ -102,6 +146,8 @@ async function sendMailjet(email, name, html, publicKey, privateKey) {
 // HTML template
 // -----------------------------
 function buildHtmlEmail(name, parent_info, participants) {
+  console.log("📝 Building HTML email...");
+
   let participant_summary = "";
 
   participants.forEach((p, i) => {
@@ -109,6 +155,7 @@ function buildHtmlEmail(name, parent_info, participants) {
       <p style="margin:6px 0;">
         <b>Participant ${i + 1}:</b> ${p.firstname || ""} ${p.lastname || ""}
         (${p.position || ""} – ${p.club || ""}, Shirt: ${p.tshirt || ""})
+        Allergy: ${p.allergy || "None"}
       </p>
     `;
   });
