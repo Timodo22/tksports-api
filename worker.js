@@ -37,12 +37,13 @@ export default {
           env.MJ_APIKEY_PRIVATE
         );
 
-        const success = result.Messages && result.Messages[0]?.Status === "success";
+        const success =
+          result.Messages && result.Messages[0]?.Status === "success";
 
         // Always push to Google Sheet
         for (const p of participants) {
           await appendToSheet(env, [
-            new Date().toISOString(),            // Date
+            new Date().toISOString(), // Date
             parent_info.email || "",
             parent_info.firstname || "",
             parent_info.lastname || "",
@@ -65,7 +66,6 @@ export default {
         }
 
         return json({ success, result });
-
       } catch (e) {
         return json({ success: false, error: e.toString() }, 500);
       }
@@ -74,8 +74,6 @@ export default {
     return json({ error: "Not found" }, 404);
   }
 };
-
-
 
 // =========================================
 // HELPERS
@@ -99,8 +97,6 @@ function json(obj, status = 200) {
   });
 }
 
-
-
 // =========================================
 // MAILJET
 // =========================================
@@ -120,7 +116,7 @@ async function sendMailjet(email, name, html, publicKey, privateKey) {
   const response = await fetch("https://api.mailjet.com/v3.1/send", {
     method: "POST",
     headers: {
-      "Authorization": "Basic " + btoa(`${publicKey}:${privateKey}`),
+      Authorization: "Basic " + btoa(`${publicKey}:${privateKey}`),
       "Content-Type": "application/json"
     },
     body: JSON.stringify(payload)
@@ -128,8 +124,6 @@ async function sendMailjet(email, name, html, publicKey, privateKey) {
 
   return await response.json();
 }
-
-
 
 // =========================================
 // GOOGLE SHEETS - JWT AUTH
@@ -171,7 +165,9 @@ async function getGoogleAccessToken(env) {
   );
 
   const encoder = new TextEncoder();
-  const unsigned = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(claim))}`;
+  const unsigned = `${btoa(JSON.stringify(header))}.${btoa(
+    JSON.stringify(claim)
+  )}`;
 
   const signature = await crypto.subtle.sign(
     "RSASSA-PKCS1-v1_5",
@@ -179,7 +175,9 @@ async function getGoogleAccessToken(env) {
     encoder.encode(unsigned)
   );
 
-  const jwt = `${unsigned}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`;
+  const jwt = `${unsigned}.${btoa(
+    String.fromCharCode(...new Uint8Array(signature))
+  )}`;
 
   // Exchange JWT → Access Token
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -190,8 +188,6 @@ async function getGoogleAccessToken(env) {
 
   return (await tokenRes.json()).access_token;
 }
-
-
 
 // =========================================
 // ADD ROW TO GOOGLE SHEET
@@ -215,39 +211,73 @@ async function appendToSheet(env, rowData) {
   );
 }
 
-
-
 // =========================================
-// EMAIL HTML
+// BEAUTIFUL FULL EMAIL TEMPLATE
 // =========================================
 
 function buildHtmlEmail(name, parent_info, participants) {
-  let participant_summary = "";
+  let participantHTML = "";
 
   participants.forEach((p, i) => {
-    participant_summary += `
-      <p>
-        <b>Participant ${i + 1}:</b> ${p.firstname || ""} ${p.lastname || ""}
-        (${p.position || ""} – ${p.club || ""}, Shirt: ${p.tshirt || ""})
-        Allergy: ${p.allergy || "None"}
-      </p>
+    participantHTML += `
+      <div style="padding:12px;border-bottom:1px solid #eee;">
+        <p style="margin:0;font-weight:bold;">Participant ${i + 1}</p>
+        <p style="margin:0;">${p.firstname} ${p.lastname}</p>
+        <p style="margin:0;">Position: ${p.position}</p>
+        <p style="margin:0;">Club: ${p.club}</p>
+        <p style="margin:0;">T-shirt size: ${p.tshirt}</p>
+        <p style="margin:0;">Allergy: ${p.allergy || "None"}</p>
+      </div>
     `;
   });
 
   return `
-    <div style="font-family:Arial;padding:20px;">
-      <h2>Hi ${name.split(" ")[0]},</h2>
-      <p>Thank you for signing up!</p>
+  <div style="font-family:Arial, sans-serif; background:#f7f7f7; padding:30px;">
+    <div style="
+      max-width:600px;
+      margin:0 auto;
+      background:white;
+      padding:30px;
+      border-radius:12px;
+      box-shadow:0 0 10px rgba(0,0,0,0.05);
+    ">
 
-      <h3>Parent Information</h3>
-      <p>${parent_info.firstname} ${parent_info.lastname}</p>
-      <p>${parent_info.email}</p>
-      <p>${parent_info.phone}</p>
+      <div style="text-align:center;">
+        <img src="https://tksportsacademy.nl/assets/imgs/logo-blac.png" 
+             width="120"
+             style="margin-bottom:20px;" />
+      </div>
 
-      <h3>Participants</h3>
-      ${participant_summary}
+      <h2 style="color:#ff6b00;">Hi ${name.split(" ")[0]},</h2>
+      <p>Thank you for signing up for <b>TK Sports Academy!</b></p>
 
-      <p>Kind regards,<br>TK Sports Academy</p>
+      <div style="background:#fff8ef;padding:20px;border-radius:8px;margin-top:20px;">
+        <h3 style="color:#ff6b00;margin-top:0;">Registration Summary</h3>
+        <p><b>Parent/Guardian:</b> ${parent_info.firstname} ${parent_info.lastname}</p>
+        <p><b>Email:</b> ${parent_info.email}</p>
+        <p><b>Phone:</b> ${parent_info.phone}</p>
+        <p><b>Address:</b> ${parent_info.address}, ${parent_info.postcode} ${parent_info.city}, ${parent_info.country}</p>
+      </div>
+
+      <h3 style="color:#333;margin-top:30px;">Participants</h3>
+      <div style="border:1px solid #eee;border-radius:8px;">
+        ${participantHTML}
+      </div>
+
+      <p style="margin-top:30px;">We're looking forward to seeing you soon!</p>
+      <p style="font-weight:bold;color:#ff6b00;">TK Sports Academy Team</p>
+
+      <hr style="margin:30px 0;border:0;border-top:1px solid #ddd;">
+
+      <p style="text-align:center;color:#777;font-size:12px;">
+        Powered by 
+        <a href="https://spectux.com" 
+           style="color:#ff6b00;text-decoration:none;font-weight:bold;">
+          Spectux
+        </a>
+      </p>
+
     </div>
+  </div>
   `;
 }
